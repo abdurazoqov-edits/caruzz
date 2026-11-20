@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Uzbek City GTA</string>
+    <string name="tab_sandbox">O‘yin</string>
+    <string name="tab_project">Capacitor</string>
+    <string name="btn_enter_car">MINISH</string>
+    <string name="btn_exit_car">TUSHISH</string>
+    <string name="btn_tuning">Nomer &amp; Rang</string>
+    <string name="btn_repair">Ta’mirlash</string>
+    <string name="btn_gas">GAZ</string>
+    <string name="btn_brake">TORMOZ</string>
+</resources>

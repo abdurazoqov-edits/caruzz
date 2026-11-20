@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+  />
+  <title>Uzbek City GTA</title>
+  <style>
+    :root {
+      --bg-glass: rgba(15, 23, 42, 0.72);
+      --border-glass: rgba(148, 163, 184, 0.28);
+      --accent: #00e5ff;
+      --gold: #f59e0b;
+      --emerald: #10b981;
+      --danger: #ef4444;
+      --text: #f8fafc;
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--text);
+      touch-action: none;
+    }
+
+    #game-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
+    /* Loading Overlay */
+    #loading-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at top, #1e293b 0%, #090d16 100%);
+      transition: opacity 0.4s ease;
+    }
+
+    #loading-screen.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .logo-title {
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      background: linear-gradient(90deg, #00e5ff, #f59e0b);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 10px;
+    }
+
+    .loading-bar-wrap {
+      width: min(280px, 75vw);
+      height: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 12px 0;
+    }
+
+    .loading-bar-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #00e5ff, #10b981);
+      transition: width 0.2s ease;
+    }
+
+    #loading-status {
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+
+    /* Top HUD */
+    #hud-top {
+      position: fixed;
+      top: max(10px, env(safe-area-inset-top));
+      left: 12px;
+      right: 12px;
+      z-index: 20;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .hud-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      pointer-events: auto;
+    }
+
+    .hud-btn {
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      backdrop-filter: blur(8px);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: transform 0.1s ease, border-color 0.2s ease;
+    }
+
+    .hud-btn:active {
+      transform: scale(0.95);
+    }
+
+    .hud-btn.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 12px rgba(0, 229, 255, 0.35);
+    }
+
+    .hud-btn.gold {
+      border-color: rgba(245, 158, 11, 0.55);
+      color: #fde68a;
+    }
+
+    .hud-btn.danger {
+      border-color: rgba(239, 68, 68, 0.6);
+      color: #fecaca;
+    }
+
+    #stats-pill {
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      padding: 6px 12px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      backdrop-filter: blur(8px);
+      pointer-events: none;
+    }
+
+    #speed-val {
+      color: var(--accent);
+      font-size: 14px;
+    }
+
+    .hp-bar-wrap {
+      width: 68px;
+      height: 7px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    #car-hp-fill {
+      width: 100%;
+      height: 100%;
+      background: var(--emerald);
+      transition: width 0.2s ease, background 0.2s ease;
+    }
+
+    /* Right Touch Camera Look Zone */
+    #camera-touch-zone {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 56%;
+      height: 100%;
+      z-index: 5;
+      touch-action: none;
+    }
+
+    /* Left Virtual Joystick */
+    #joystick-zone {
+      position: fixed;
+      left: max(16px, env(safe-area-inset-left));
+      bottom: max(18px, env(safe-area-inset-bottom));
+      width: 140px;
+      height: 140px;
+      z-index: 25;
+      touch-action: none;
+    }
+
+    #joystick-base {
+      width: 128px;
+      height: 128px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.45);
+      border: 2px solid rgba(0, 229, 255, 0.45);
+      position: relative;
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #joystick-stick {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #67e8f9, #0284c7);
+      border: 2px solid #fff;
+      box-shadow: 0 4px 14px rgba(0, 229, 255, 0.5);
+      position: absolute;
+      transform: translate(0px, 0px);
+      pointer-events: none;
+    }
+
+    /* Steering buttons when driving on left side */
+    #steer-controls {
+      position: fixed;
+      left: max(16px, env(safe-area-inset-left));
+      bottom: max(22px, env(safe-area-inset-bottom));
+      z-index: 26;
+      display: none;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .steer-btn {
+      width: 68px;
+      height: 68px;
+      border-radius: 50%;
+      background: var(--bg-glass);
+      border: 2px solid rgba(0, 229, 255, 0.55);
+      color: #fff;
+      font-size: 24px;
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(8px);
+      touch-action: none;
+    }
+
+    .steer-btn:active,
+    .steer-btn.pressed {
+      background: rgba(0, 229, 255, 0.35);
+      transform: scale(0.94);
+    }
+
+    /* Steering wheel indicator */
+    #steering-wheel-hud {
+      position: fixed;
+      bottom: max(26px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      border: 4px solid rgba(248, 250, 252, 0.65);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 15;
+      pointer-events: none;
+      background: rgba(15, 23, 42, 0.45);
+    }
+
+    #steering-wheel-hud::before {
+      content: "";
+      width: 48px;
+      height: 4px;
+      background: rgba(248, 250, 252, 0.85);
+      border-radius: 2px;
+    }
+
+    /* Right-side Driving Pedals + Enter/Exit */
+    #right-controls {
+      position: fixed;
+      right: max(16px, env(safe-area-inset-right));
+      bottom: max(20px, env(safe-area-inset-bottom));
+      z-index: 26;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 12px;
+    }
+
+    #enter-exit-btn {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #0f172a;
+      border: 2px solid #fde68a;
+      border-radius: 16px;
+      padding: 12px 18px;
+      font-size: 14px;
+      font-weight: 900;
+      letter-spacing: 0.6px;
+      box-shadow: 0 6px 20px rgba(245, 158, 11, 0.45);
+      cursor: pointer;
+      display: none;
+    }
+
+    #enter-exit-btn.visible {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #pedals-row {
+      display: none;
+      align-items: flex-end;
+      gap: 12px;
+    }
+
+    .pedal-btn {
+      width: 66px;
+      border-radius: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(6px);
+      touch-action: none;
+    }
+
+    #btn-brake {
+      height: 76px;
+      background: rgba(239, 68, 68, 0.55);
+      border-color: rgba(252, 165, 165, 0.7);
+    }
+
+    #btn-gas {
+      height: 98px;
+      background: rgba(16, 185, 129, 0.6);
+      border-color: rgba(110, 231, 183, 0.8);
+    }
+
+    .pedal-btn.pressed {
+      transform: scale(0.94);
+      filter: brightness(1.25);
+    }
+
+    /* Tuning Modal (O'zbekiston Nomer va Rang) */
+    #tuning-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 60;
+      background: rgba(2, 6, 23, 0.72);
+      backdrop-filter: blur(6px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    #tuning-modal.open {
+      display: flex;
+    }
+
+    .modal-card {
+      width: min(380px, 92vw);
+      background: #0f172a;
+      border: 1px solid rgba(0, 229, 255, 0.4);
+      border-radius: 20px;
+      padding: 18px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .modal-header h3 {
+      margin: 0;
+      font-size: 16px;
+      color: var(--accent);
+    }
+
+    .uz-plate-preview {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #ffffff;
+      color: #0f172a;
+      border: 3px solid #0f172a;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-family: monospace;
+      font-weight: 900;
+      font-size: 20px;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+    }
+
+    .uz-plate-region {
+      border-right: 2px solid #0f172a;
+      padding-right: 8px;
+      margin-right: 8px;
+    }
+
+    .uz-flag-badge {
+      font-size: 11px;
+      color: #0284c7;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      line-height: 1.1;
+    }
+
+    .plate-inputs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .plate-inputs input {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #fff;
+      padding: 9px 10px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 14px;
+      text-transform: uppercase;
+      outline: none;
+    }
+
+    #input-region {
+      width: 68px;
+      text-align: center;
+    }
+
+    #input-plate {
+      flex: 1;
+    }
+
+    .color-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 10px 0 16px;
+    }
+
+    .color-swatch {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.45);
+      cursor: pointer;
+    }
+
+    .color-swatch.selected {
+      border: 3px solid var(--accent);
+      transform: scale(1.12);
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    #toast-msg {
+      position: fixed;
+      top: 68px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid var(--accent);
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      z-index: 45;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+
+    #toast-msg.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Camera Drag Zone (Right Side) -->
+  <div id="camera-touch-zone"></div>
+
+  <!-- Loading Overlay -->
+  <div id="loading-screen">
+    <div class="logo-title">UZBEK CITY GTA</div>
+    <div class="loading-bar-wrap">
+      <div class="loading-bar-fill" id="loading-bar"></div>
+    </div>
+    <div id="loading-status">Toshkent xaritasi yuklanmoqda...</div>
+  </div>
+
+  <!-- Top HUD -->
+  <div id="hud-top">
+    <div class="hud-group" id="car-select-group">
+      <button class="hud-btn active" data-car="gentra">Gentra</button>
+      <button class="hud-btn" data-car="nexia">Nexia 2</button>
+      <button class="hud-btn" data-car="damas">Damas</button>
+      <button class="hud-btn" data-car="cobalt" id="btn-cobalt" style="display: none;">Cobalt</button>
+    </div>
+
+    <div id="stats-pill">
+      <span><b id="speed-val">0</b> km/h</span>
+      <div class="hp-bar-wrap" title="Mashina holati">
+        <div id="car-hp-fill"></div>
+      </div>
+      <span id="plate-hud">01 A 777 AA</span>
+    </div>
+
+    <div class="hud-group">
+      <button class="hud-btn gold" id="btn-tuning">Nomer &amp; Rang</button>
+      <button class="hud-btn" id="btn-radio">Radio: OFF</button>
+      <button class="hud-btn danger" id="btn-repair" style="display: none;">Ta'mirlash</button>
+    </div>
+  </div>
+
+  <div id="toast-msg"></div>
+
+  <!-- Left Virtual Joystick (Walking Mode) -->
+  <div id="joystick-zone">
+    <div id="joystick-base">
+      <div id="joystick-stick"></div>
+    </div>
+  </div>
+
+  <!-- Left Steering Buttons (Driving Mode) -->
+  <div id="steer-controls">
+    <button class="steer-btn" id="btn-steer-left">◀</button>
+    <button class="steer-btn" id="btn-steer-right">▶</button>
+  </div>
+
+  <!-- Visual Steering Wheel -->
+  <div id="steering-wheel-hud"></div>
+
+  <!-- Right Controls: Enter/Exit + Gas/Brake Pedals -->
+  <div id="right-controls">
+    <button id="enter-exit-btn">MINISH</button>
+    <div id="pedals-row">
+      <button class="pedal-btn" id="btn-brake">TORMOZ<br />(R)</button>
+      <button class="pedal-btn" id="btn-gas">GAZ</button>
+    </div>
+  </div>
+
+  <!-- Tuning Modal: O'zbekiston Davlat Raqami & Rang -->
+  <div id="tuning-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Davlat Raqami &amp; Rang</h3>
+        <button class="hud-btn" id="btn-close-tuning">✕</button>
+      </div>
+
+      <div class="uz-plate-preview">
+        <div style="display: flex; align-items: center;">
+          <span class="uz-plate-region" id="preview-region">01</span>
+          <span id="preview-plate">A 777 AA</span>
+        </div>
+        <div class="uz-flag-badge">
+          <span style="color:#0284c7">▬</span>
+          <span>UZ</span>
+        </div>
+      </div>
+
+      <div class="plate-inputs">
+        <input id="input-region" type="text" maxlength="2" value="01" placeholder="01" />
+        <input id="input-plate" type="text" maxlength="9" value="A 777 AA" placeholder="A 777 AA" />
+      </div>
+
+      <div style="font-size: 12px; color: #94a3b8; font-weight: 700;">MASHINA RANGI:</div>
+      <div class="color-grid" id="color-grid">
+        <div class="color-swatch selected" data-color="#f8fafc" style="background:#f8fafc" title="Oq"></div>
+        <div class="color-swatch" data-color="#111827" style="background:#111827" title="Qora"></div>
+        <div class="color-swatch" data-color="#94a3b8" style="background:#94a3b8" title="Mokriy asfalt / Kumush"></div>
+        <div class="color-swatch" data-color="#2563eb" style="background:#2563eb" title="Ko'k"></div>
+        <div class="color-swatch" data-color="#dc2626" style="background:#dc2626" title="Qizil"></div>
+        <div class="color-swatch" data-color="#059669" style="background:#059669" title="Yashil"></div>
+        <div class="color-swatch" data-color="#f59e0b" style="background:#f59e0b" title="Tilla"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="hud-btn active" id="btn-apply-tuning">Saqlash</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

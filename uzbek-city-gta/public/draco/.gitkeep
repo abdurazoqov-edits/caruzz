@@ -1,0 +1,2 @@
+# GitHub Actions workflow build paytida Three.js dan Draco dekoderlarni avtomatik shu yerga ko'chiradi.
+# Lokal test uchun: mkdir -p public/draco && cp -r node_modules/three/examples/jsm/libs/draco/* public/draco/

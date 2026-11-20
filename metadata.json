@@ -1,0 +1,6 @@
+{
+  "name": "Uzbek City GTA",
+  "description": "Uzbek City GTA 3D mobile game project (Three.js + Vite + Capacitor) and playable Android sandbox with Gentra, Nexia 2, Damas, Uzbek plates, NPCs, and Tashkent landmarks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

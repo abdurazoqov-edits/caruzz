@@ -1,0 +1,10 @@
+{
+  "appId": "com.uzb.citygta",
+  "appName": "Uzbek City GTA",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#0f172a"
+  }
+}
