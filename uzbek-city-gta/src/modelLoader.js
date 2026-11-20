@@ -16,14 +16,26 @@ export async function loadNormalizedModel(url, options = {}) {
     targetHeight = null,
     targetMaxSize = null,
     rotateY = 0,
-    centerXZ = true,
-    envIntensity = 1.05
+    autoAlignZ = false,
+    centerXZ = true
   } = options;
 
   const gltf = await gltfLoader.loadAsync(url);
   const inner = gltf.scene;
   inner.rotation.y = rotateY;
 
+  // Agar mashina yonbosh eksport qilingan bo'lsa (kengligi uzunligidan katta), avtomatik 90° burish
+  if (autoAlignZ) {
+    inner.updateMatrixWorld(true);
+    const preBox = new THREE.Box3().setFromObject(inner);
+    const preSize = new THREE.Vector3();
+    preBox.getSize(preSize);
+    if (preSize.x > preSize.z * 1.12) {
+      inner.rotation.y += Math.PI / 2;
+    }
+  }
+
+  inner.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(inner);
   const size = new THREE.Vector3();
   box.getSize(size);
@@ -56,7 +68,6 @@ export async function loadNormalizedModel(url, options = {}) {
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
         mats.forEach((m) => {
           if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
-          if ('envMapIntensity' in m) m.envMapIntensity = envIntensity;
         });
       }
     }
@@ -78,24 +89,23 @@ export async function loadNormalizedModel(url, options = {}) {
   };
 }
 
-/**
- * Yumshoq contact shadow (GPU shadow map o'rniga 60 FPS tezkor soya)
- */
+let sharedShadowTex = null;
 export function createContactShadow(width = 2.2, length = 4.4) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 64;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d');
-  const grad = ctx.createRadialGradient(32, 32, 4, 32, 32, 30);
-  grad.addColorStop(0, 'rgba(0,0,0,0.58)');
-  grad.addColorStop(0.65, 'rgba(0,0,0,0.22)');
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 64, 64);
-
-  const tex = new THREE.CanvasTexture(canvas);
+  if (!sharedShadowTex) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(32, 32, 4, 32, 32, 30);
+    grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+    grad.addColorStop(0.65, 'rgba(0,0,0,0.2)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 64, 64);
+    sharedShadowTex = new THREE.CanvasTexture(canvas);
+  }
   const mat = new THREE.MeshBasicMaterial({
-    map: tex,
+    map: sharedShadowTex,
     transparent: true,
     depthWrite: false
   });
@@ -106,7 +116,9 @@ export function createContactShadow(width = 2.2, length = 4.4) {
 }
 
 /**
- * Personaj uchun oyoq-qo'l animatsiyasi (GLB clip + protsedural qo'l/oyoq harakati)
+ * Personaj uchun animatsiya:
+ * 1) Agar GLB da clip bo'lsa AnimationMixer ishlaydi
+ * 2) Agar bitta mesh bo'lsa (masalan cyberpunk_women.glb), GPU vertex shader orqali qo'l va oyoqlar qimirlaydi!
  */
 export function setupCharacterRig(charRoot, inner, animations = []) {
   let mixer = null;
@@ -119,26 +131,66 @@ export function setupCharacterRig(charRoot, inner, animations = []) {
     walkAction = mixer.clipAction(walkClip);
   }
 
-  // Agar modelda suyak/mesh nomlari bo'lsa (qo'l, oyoq) protsedural harakat uchun yig'amiz
-  const leftArms = [];
-  const rightArms = [];
-  const leftLegs = [];
-  const rightLegs = [];
+  const shaderUniforms = {
+    uWalkPhase: { value: 0 },
+    uWalkAmp: { value: 0 },
+    uCharInvMatrix: { value: new THREE.Matrix4() },
+    uCharMatrix: { value: new THREE.Matrix4() }
+  };
 
-  inner.traverse((obj) => {
-    if (!obj.name) return;
-    const n = obj.name.toLowerCase();
-    if (/(arm|shoulder|upperarm|hand)/i.test(n)) {
-      if (/(left|_l|\.l|l_)/i.test(n)) leftArms.push(obj);
-      else if (/(right|_r|\.r|r_)/i.test(n)) rightArms.push(obj);
-    } else if (/(leg|thigh|upleg|calf|shin|foot)/i.test(n)) {
-      if (/(left|_l|\.l|l_)/i.test(n)) leftLegs.push(obj);
-      else if (/(right|_r|\.r|r_)/i.test(n)) rightLegs.push(obj);
-    }
-  });
+  if (!walkAction) {
+    inner.traverse((obj) => {
+      if (!obj.isMesh || !obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      const patched = mats.map((mat) => {
+        const m = mat.clone();
+        m.onBeforeCompile = (shader) => {
+          shader.uniforms.uWalkPhase = shaderUniforms.uWalkPhase;
+          shader.uniforms.uWalkAmp = shaderUniforms.uWalkAmp;
+          shader.uniforms.uCharInvMatrix = shaderUniforms.uCharInvMatrix;
+          shader.uniforms.uCharMatrix = shaderUniforms.uCharMatrix;
+
+          shader.vertexShader =
+            `uniform float uWalkPhase;
+             uniform float uWalkAmp;
+             uniform mat4 uCharInvMatrix;
+             uniform mat4 uCharMatrix;\n` + shader.vertexShader;
+
+          shader.vertexShader = shader.vertexShader.replace(
+            '#include <begin_vertex>',
+            `#include <begin_vertex>
+             if (uWalkAmp > 0.001) {
+               vec3 cp = (uCharInvMatrix * modelMatrix * vec4(transformed, 1.0)).xyz;
+               float s = sin(uWalkPhase);
+
+               // Oyoqlar (y < 0.88)
+               float legMask = smoothstep(0.92, 0.65, cp.y);
+               float legSide = cp.x < 0.0 ? 1.0 : -1.0;
+               float legArmLen = max(0.0, 0.88 - cp.y);
+               float legDZ = s * 0.48 * legSide * uWalkAmp * legMask * legArmLen;
+
+               // Qo'llar (0.72 < y < 1.44 va |x| > 0.13)
+               float armMask = smoothstep(0.11, 0.21, abs(cp.x))
+                             * smoothstep(0.68, 0.86, cp.y)
+                             * smoothstep(1.52, 1.36, cp.y);
+               float armSide = cp.x < 0.0 ? -1.0 : 1.0;
+               float armLen = max(0.0, 1.38 - cp.y);
+               float armDZ = s * 0.62 * armSide * uWalkAmp * armMask * armLen;
+
+               vec3 charDelta = vec3(0.0, abs(s) * 0.04 * uWalkAmp, legDZ + armDZ);
+               vec3 localDelta = (inverse(modelMatrix) * uCharMatrix * vec4(charDelta, 0.0)).xyz;
+               transformed += localDelta;
+             }`
+          );
+        };
+        return m;
+      });
+      obj.material = Array.isArray(obj.material) ? patched : patched[0];
+    });
+  }
 
   let walkPhase = Math.random() * Math.PI * 2;
-  const baseY = inner.position.y;
+  let walkAmp = 0;
 
   return {
     animate(dt, isMoving) {
@@ -149,75 +201,56 @@ export function setupCharacterRig(charRoot, inner, animations = []) {
         } else if (walkAction.isRunning()) {
           walkAction.stop();
         }
+        return;
       }
 
       if (isMoving) {
-        walkPhase += dt * 10.5;
-        const swing = Math.sin(walkPhase) * 0.55;
-        // Agar clip bo'lmasa suyak/qismlarni silkitish
-        if (!walkAction) {
-          leftArms.forEach((b) => { b.rotation.x = swing; });
-          rightArms.forEach((b) => { b.rotation.x = -swing; });
-          leftLegs.forEach((b) => { b.rotation.x = -swing; });
-          rightLegs.forEach((b) => { b.rotation.x = swing; });
-        }
-        // Qadam tashlashda yengil tebranish
-        inner.position.y = baseY + Math.abs(Math.sin(walkPhase)) * 0.055;
-        inner.rotation.z = Math.sin(walkPhase) * 0.035;
+        walkPhase += dt * 11.0;
+        walkAmp = THREE.MathUtils.lerp(walkAmp, 1.0, dt * 10);
       } else {
-        inner.position.y = THREE.MathUtils.lerp(inner.position.y, baseY, dt * 10);
-        inner.rotation.z = THREE.MathUtils.lerp(inner.rotation.z, 0, dt * 10);
-        if (!walkAction) {
-          leftArms.forEach((b) => { b.rotation.x = THREE.MathUtils.lerp(b.rotation.x, 0, dt * 10); });
-          rightArms.forEach((b) => { b.rotation.x = THREE.MathUtils.lerp(b.rotation.x, 0, dt * 10); });
-          leftLegs.forEach((b) => { b.rotation.x = THREE.MathUtils.lerp(b.rotation.x, 0, dt * 10); });
-          rightLegs.forEach((b) => { b.rotation.x = THREE.MathUtils.lerp(b.rotation.x, 0, dt * 10); });
-        }
+        walkAmp = THREE.MathUtils.lerp(walkAmp, 0.0, dt * 10);
       }
+
+      charRoot.updateMatrixWorld();
+      shaderUniforms.uWalkPhase.value = walkPhase;
+      shaderUniforms.uWalkAmp.value = walkAmp;
+      shaderUniforms.uCharMatrix.value.copy(charRoot.matrixWorld);
+      shaderUniforms.uCharInvMatrix.value.copy(charRoot.matrixWorld).invert();
     }
   };
 }
 
-/**
- * Fallback personaj (qo'l va oyoqlari qimirlaydigan)
- */
 export function createFallbackCharacter(colorHex = '#00e5ff') {
   const root = new THREE.Group();
   const inner = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.45 });
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.6 });
-  const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7 });
+  const mat = new THREE.MeshLambertMaterial({ color: colorHex });
+  const skinMat = new THREE.MeshLambertMaterial({ color: 0xfde68a });
+  const pantsMat = new THREE.MeshLambertMaterial({ color: 0x1e293b });
 
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.58, 0.24), mat);
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.56, 0.22), mat);
   torso.position.y = 1.08;
   inner.add(torso);
 
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.28), skinMat);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.28, 0.26), skinMat);
   head.position.y = 1.54;
   inner.add(head);
 
-  const armGeo = new THREE.BoxGeometry(0.14, 0.52, 0.14);
-  armGeo.translate(0, -0.22, 0);
+  const armGeo = new THREE.BoxGeometry(0.12, 0.52, 0.12);
   const leftArm = new THREE.Mesh(armGeo, mat);
-  leftArm.name = 'LeftArm';
-  leftArm.position.set(-0.32, 1.32, 0);
+  leftArm.position.set(-0.24, 1.08, 0);
   inner.add(leftArm);
 
   const rightArm = new THREE.Mesh(armGeo, mat);
-  rightArm.name = 'RightArm';
-  rightArm.position.set(0.32, 1.32, 0);
+  rightArm.position.set(0.24, 1.08, 0);
   inner.add(rightArm);
 
-  const legGeo = new THREE.BoxGeometry(0.18, 0.68, 0.18);
-  legGeo.translate(0, -0.34, 0);
+  const legGeo = new THREE.BoxGeometry(0.14, 0.72, 0.14);
   const leftLeg = new THREE.Mesh(legGeo, pantsMat);
-  leftLeg.name = 'LeftLeg';
-  leftLeg.position.set(-0.12, 0.75, 0);
+  leftLeg.position.set(-0.1, 0.36, 0);
   inner.add(leftLeg);
 
   const rightLeg = new THREE.Mesh(legGeo, pantsMat);
-  rightLeg.name = 'RightLeg';
-  rightLeg.position.set(0.12, 0.75, 0);
+  rightLeg.position.set(0.1, 0.36, 0);
   inner.add(rightLeg);
 
   root.add(inner);
@@ -227,31 +260,15 @@ export function createFallbackCharacter(colorHex = '#00e5ff') {
 export function createFallbackCar(colorHex = '#f8fafc', isVan = false) {
   const root = new THREE.Group();
   const inner = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: colorHex,
-    metalness: 0.65,
-    roughness: 0.22,
-    envMapIntensity: 1.25
-  });
-  const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x0f172a,
-    metalness: 0.9,
-    roughness: 0.08,
-    envMapIntensity: 1.4
-  });
-  const wheelMat = new THREE.MeshStandardMaterial({
-    color: 0x111827,
-    roughness: 0.85
-  });
+  const bodyMat = new THREE.MeshLambertMaterial({ color: colorHex });
+  const glassMat = new THREE.MeshLambertMaterial({ color: 0x0f172a });
+  const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111827 });
 
-  const length = isVan ? 3.9 : 4.4;
-  const width = isVan ? 1.65 : 1.88;
+  const length = isVan ? 3.8 : 4.3;
+  const width = isVan ? 1.65 : 1.85;
   const baseH = isVan ? 0.95 : 0.65;
 
-  const chassis = new THREE.Mesh(
-    new THREE.BoxGeometry(width, baseH, length, 4, 2, 6),
-    bodyMat
-  );
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(width, baseH, length), bodyMat);
   chassis.name = 'car_body_chassis';
   chassis.position.y = 0.58;
   inner.add(chassis);
@@ -264,7 +281,7 @@ export function createFallbackCar(colorHex = '#f8fafc', isVan = false) {
   cabin.position.set(0, baseH + 0.5, isVan ? -0.05 : -0.15);
   inner.add(cabin);
 
-  const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.24, 14);
+  const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.24, 12);
   wheelGeo.rotateZ(Math.PI / 2);
 
   [
@@ -287,13 +304,12 @@ export function createFallbackCar(colorHex = '#f8fafc', isVan = false) {
 }
 
 /**
- * Mashina balonlari, bo'yaladigan kuzov, tormoz chiroqlari, nomer va pachoq rigi.
+ * Mashina balonlari, bo'yaladigan kuzov, nomer va tezkor pachoq rigi (geometriya klonlanmaydi -> 0 lag).
  */
 export function setupVehicleRig(carRoot, carInner, initialColor = '#f8fafc') {
   const wheels = [];
   const frontSteerPivots = [];
   const paintMaterials = [];
-  const deformableMeshes = [];
 
   carRoot.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(carRoot);
@@ -313,24 +329,12 @@ export function setupVehicleRig(carRoot, carInner, initialColor = '#f8fafc') {
       return;
     }
 
-    if (obj.geometry && obj.geometry.attributes?.position) {
-      if (!obj.geometry.userData.originalPositions) {
-        obj.geometry = obj.geometry.clone();
-        obj.geometry.userData.originalPositions = Float32Array.from(
-          obj.geometry.attributes.position.array
-        );
-      }
-      deformableMeshes.push(obj);
-    }
-
     const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
     const clonedMats = mats.map((mat) => {
       if (!mat) return mat;
       const matName = `${obj.name}_${mat.name || ''}`;
       if (!ignorePaintRegex.test(matName) && !mat.transparent) {
         const cloned = mat.clone();
-        if ('metalness' in cloned) cloned.metalness = Math.max(cloned.metalness || 0, 0.45);
-        if ('roughness' in cloned) cloned.roughness = Math.min(cloned.roughness ?? 0.5, 0.35);
         paintMaterials.push(cloned);
         return cloned;
       }
@@ -339,7 +343,7 @@ export function setupVehicleRig(carRoot, carInner, initialColor = '#f8fafc') {
     obj.material = Array.isArray(obj.material) ? clonedMats : clonedMats[0];
   });
 
-  // Balonlarni markazlashtirib pivotga bog'lash
+  const allSteerPivots = [];
   detectedWheelMeshes.forEach((wheelObj) => {
     const wheelBox = new THREE.Box3().setFromObject(wheelObj);
     const wheelWorldCenter = new THREE.Vector3();
@@ -359,26 +363,35 @@ export function setupVehicleRig(carRoot, carInner, initialColor = '#f8fafc') {
     spinPivot.attach(wheelObj);
 
     wheels.push(spinPivot);
+    allSteerPivots.push(steerPivot);
     if (isFront) frontSteerPivots.push(steerPivot);
   });
 
-  // Yumshoq contact shadow
-  carRoot.add(createContactShadow(size.x * 1.15, size.z * 1.12));
+  const rotateDetachedWheels = (deltaY) => {
+    const c = Math.cos(deltaY);
+    const s = Math.sin(deltaY);
+    frontSteerPivots.length = 0;
+    allSteerPivots.forEach((sp) => {
+      const x = sp.position.x;
+      const z = sp.position.z;
+      sp.position.x = x * c + z * s;
+      sp.position.z = -x * s + z * c;
+      sp.children.forEach((spinP) => {
+        spinP.children.forEach((w) => {
+          w.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0), deltaY);
+        });
+      });
+      if (sp.position.z > 0) frontSteerPivots.push(sp);
+    });
+  };
 
-  // Tormoz stop chiroqlari
-  const brakeMat = new THREE.MeshBasicMaterial({ color: 0x7f1d1d });
-  const tailGeo = new THREE.BoxGeometry(0.28, 0.1, 0.06);
-  const leftBrake = new THREE.Mesh(tailGeo, brakeMat);
-  leftBrake.position.set(-size.x * 0.34, size.y * 0.44, box.min.z - 0.01);
-  const rightBrake = new THREE.Mesh(tailGeo, brakeMat);
-  rightBrake.position.set(size.x * 0.34, size.y * 0.44, box.min.z - 0.01);
-  carRoot.add(leftBrake, rightBrake);
+  carRoot.add(createContactShadow(size.x * 1.15, size.z * 1.12));
 
   // O'zbekiston davlat raqami
   const plateData = { region: '01', number: 'A 777 AA' };
   const plateTexture = createUzbekPlateTexture(plateData.region, plateData.number);
   const plateMat = new THREE.MeshBasicMaterial({ map: plateTexture });
-  const plateGeo = new THREE.PlaneGeometry(0.54, 0.13);
+  const plateGeo = new THREE.PlaneGeometry(0.52, 0.12);
 
   const frontPlate = new THREE.Mesh(plateGeo, plateMat);
   frontPlate.position.set(0, Math.max(0.4, size.y * 0.28), box.max.z + 0.02);
@@ -408,53 +421,24 @@ export function setupVehicleRig(carRoot, carInner, initialColor = '#f8fafc') {
   return {
     wheels,
     frontSteerPivots,
-    deformableMeshes,
     plateData,
     setColor,
     setPlate,
-    setBraking(braking) {
-      brakeMat.color.setHex(braking ? 0xff2020 : 0x6b1414);
+    setDentFactor(hp) {
+      const dmg = Math.max(0, (100 - hp) / 100);
+      carInner.scale.set(1 + dmg * 0.04, 1 - dmg * 0.05, 1 - dmg * 0.09);
+      carInner.rotation.z = dmg * 0.04;
+    },
+    rotate90() {
+      carInner.rotation.y += Math.PI / 2;
+      rotateDetachedWheels(Math.PI / 2);
     },
     flip180() {
       carInner.rotation.y += Math.PI;
+      rotateDetachedWheels(Math.PI);
     },
     size
   };
-}
-
-export function applyCarDent(rig, localHitPoint, impactStrength = 0.22) {
-  if (!rig?.deformableMeshes) return;
-  const radius = 1.1;
-  rig.deformableMeshes.forEach((mesh) => {
-    const posAttr = mesh.geometry.attributes.position;
-    if (!posAttr) return;
-    const v = new THREE.Vector3();
-    for (let i = 0; i < posAttr.count; i++) {
-      v.fromBufferAttribute(posAttr, i);
-      if (v.distanceTo(localHitPoint) < radius) {
-        const factor = (1 - v.distanceTo(localHitPoint) / radius) * impactStrength;
-        v.x *= 1 - factor * 0.42;
-        v.z *= 1 - factor * 0.5;
-        v.y += (Math.random() - 0.35) * factor * 0.22;
-        posAttr.setXYZ(i, v.x, v.y, v.z);
-      }
-    }
-    posAttr.needsUpdate = true;
-    mesh.geometry.computeVertexNormals();
-  });
-}
-
-export function repairCarRig(rig) {
-  if (!rig?.deformableMeshes) return;
-  rig.deformableMeshes.forEach((mesh) => {
-    const orig = mesh.geometry.userData.originalPositions;
-    const posAttr = mesh.geometry.attributes.position;
-    if (orig && posAttr) {
-      posAttr.array.set(orig);
-      posAttr.needsUpdate = true;
-      mesh.geometry.computeVertexNormals();
-    }
-  });
 }
 
 export function createUzbekPlateTexture(region = '01', number = 'A 777 AA') {

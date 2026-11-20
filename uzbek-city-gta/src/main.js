@@ -5,98 +5,62 @@ import {
   createFallbackCharacter,
   createContactShadow,
   setupCharacterRig,
-  setupVehicleRig,
-  applyCarDent,
-  repairCarRig
+  setupVehicleRig
 } from './modelLoader.js';
 import { SoundEngine } from './soundEngine.js';
 
 // ==========================================
-// 1. YUKSIZ 60 FPS RENDERER VA "9D" REALISTIK MUHIT
+// 1. TEZKOR 60 FPS RENDERER (QOTISHSIZ MOBIL ENGINE)
 // ==========================================
 const canvas = document.getElementById('game-canvas');
 const renderer = new THREE.WebGLRenderer({
   canvas,
-  antialias: false, // Mobil GPU da qotmasligi uchun
-  logarithmicDepthBuffer: true,
+  antialias: false,
+  logarithmicDepthBuffer: false, // Hardware Early-Z ishlashi uchun (3x tezroq)
   powerPreference: 'high-performance'
 });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.0));
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.18;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.shadowMap.enabled = false; // Contact shadow ishlatiladi -> 60 FPS silliq!
+renderer.shadowMap.enabled = false;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
-scene.fog = new THREE.Fog(0x9bd6f0, 260, 1400);
+scene.fog = new THREE.Fog(0x9bd6f0, 130, 470);
 
 const camera = new THREE.PerspectiveCamera(
   62,
   window.innerWidth / window.innerHeight,
-  0.5,
-  2500
+  0.8,
+  500
 );
 
-// Realistik osmon aks-sadosi (PMREM Environment) -> mashinalar yaltirashi uchun
-function setupRealisticEnvironment() {
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const envScene = new THREE.Scene();
-  const skyGeo = new THREE.SphereGeometry(50, 16, 12);
-  const skyCanvas = document.createElement('canvas');
-  skyCanvas.width = 4;
-  skyCanvas.height = 128;
-  const ctx = skyCanvas.getContext('2d');
-  const grad = ctx.createLinearGradient(0, 0, 0, 128);
-  grad.addColorStop(0.0, '#1d4ed8');
-  grad.addColorStop(0.45, '#7dd3fc');
-  grad.addColorStop(0.52, '#fef3c7');
-  grad.addColorStop(0.55, '#475569');
-  grad.addColorStop(1.0, '#1e293b');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 4, 128);
-  const skyTex = new THREE.CanvasTexture(skyCanvas);
-  skyTex.colorSpace = THREE.SRGBColorSpace;
-
-  const skyDome = new THREE.Mesh(
-    skyGeo,
-    new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide })
-  );
-  envScene.add(skyDome);
-
-  const envRT = pmrem.fromScene(envScene, 0.04);
-  scene.environment = envRT.texture;
-  pmrem.dispose();
-}
-setupRealisticEnvironment();
-
-const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x334155, 1.3);
+const hemiLight = new THREE.HemisphereLight(0xeef6ff, 0x334155, 1.35);
 scene.add(hemiLight);
 
-const sunLight = new THREE.DirectionalLight(0xfff1d6, 2.3);
-sunLight.position.set(110, 180, 85);
+const sunLight = new THREE.DirectionalLight(0xfff5e0, 1.55);
+sunLight.position.set(90, 150, 75);
 scene.add(sunLight);
 
-// Zaxira yer (shahar yo'llaridan pastda y = -0.4, Z-fighting yo'q)
+// Zaxira yer (shahar yo'llaridan pastda y = -0.4)
 const fallbackGround = new THREE.Mesh(
-  new THREE.PlaneGeometry(3000, 3000),
-  new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.92 })
+  new THREE.PlaneGeometry(2400, 2400),
+  new THREE.MeshLambertMaterial({ color: 0x334155 })
 );
 fallbackGround.rotation.x = -Math.PI / 2;
 fallbackGround.position.y = -0.4;
 scene.add(fallbackGround);
 
 // ==========================================
-// 2. TEZKOR O(1) HEIGHT GRID (QOTISHNI YO'QOTISH UCHUN)
+// 2. O(1) HEIGHT GRID (QOTISHSIZ YER BALANDLIGI)
 // ==========================================
 const cityColliderMeshes = [];
 const buildingObstacles = [];
 const groundRaycaster = new THREE.Raycaster();
 const downVec = new THREE.Vector3(0, -1, 0);
 
-const GRID_RES = 80;
-const GRID_RANGE = 220; // -220 .. +220
+const GRID_RES = 72;
+const GRID_RANGE = 220;
 const heightGrid = new Float32Array(GRID_RES * GRID_RES);
 let heightGridBaked = false;
 
@@ -107,9 +71,8 @@ function bakeGroundHeightGrid() {
     const wz = -GRID_RANGE + gz * step;
     for (let gx = 0; gx < GRID_RES; gx++) {
       const wx = -GRID_RANGE + gx * step;
-      groundRaycaster.set(new THREE.Vector3(wx, 200, wz), downVec);
+      groundRaycaster.set(new THREE.Vector3(wx, 180, wz), downVec);
       const hits = groundRaycaster.intersectObjects(cityColliderMeshes, true);
-      // Eng past yoki yo'l darajasidagi nuqtani olish (bino tomiga chiqib ketmaslik uchun)
       let y = 0;
       for (let k = hits.length - 1; k >= 0; k--) {
         if (hits[k].point.y < 3.5) {
@@ -146,7 +109,7 @@ function getGroundY(x, z) {
 }
 
 // ==========================================
-// 3. OVOZ VA HUD ELEMENTLARI (SHAFFOF TUGMALAR)
+// 3. OVOZ VA SHAFFOF HUD ELEMENTLARI
 // ==========================================
 const sound = new SoundEngine();
 
@@ -165,13 +128,13 @@ const btnCameraMode = document.getElementById('btn-camera-mode');
 const btnSwitchChar = document.getElementById('btn-switch-char');
 
 // ==========================================
-// 4. MODELLARNI AVTOMATIK ANIQLASH VA JOYLASH
+// 4. MODELLARNI YUKLASH (QOTMASDAN TEZ)
 // ==========================================
-const CAMERA_MODES = ['close', 'far', 'firstPerson']; // Yaqindan, Uzoqdan, Ko'z bilan
+const CAMERA_MODES = ['close', 'far', 'firstPerson'];
 
 const state = {
   manifest: [],
-  characters: [], // { id, root, rig }
+  characters: [],
   activeCharIdx: 0,
   playerPos: new THREE.Vector3(0, 0, 14),
   playerYaw: 0,
@@ -180,7 +143,7 @@ const state = {
   activeCar: null,
   lastCar: null,
   cameraModeIdx: 0,
-  cameraYaw: Math.PI, // Oldinga qarab turadi (+Z)
+  cameraYaw: Math.PI,
   cameraPitch: 0.24,
   npcs: [],
   trafficCars: []
@@ -193,9 +156,7 @@ async function loadManifest() {
       state.manifest = await res.json();
       return;
     }
-  } catch (e) {
-    // Lokal dev fallback
-  }
+  } catch (e) {}
   state.manifest = [
     'ccity_building_set_1.glb',
     'tashkent_tv_tower.glb',
@@ -218,6 +179,13 @@ function findModelFile(keyword) {
   return found ? `./models/${found}` : null;
 }
 
+function freezeStaticGroup(group) {
+  group.traverse((obj) => {
+    obj.matrixAutoUpdate = false;
+    obj.updateMatrix();
+  });
+}
+
 async function loadCityAndLandmarks() {
   const cityUrl = findModelFile('ccity_building') || './models/ccity_building_set_1.glb';
   try {
@@ -229,17 +197,18 @@ async function loadCityAndLandmarks() {
         const b = new THREE.Box3().setFromObject(obj);
         const s = new THREE.Vector3();
         b.getSize(s);
-        if (s.y > 2.6 && s.x < 85 && s.z < 85) {
+        if (s.y > 2.8 && s.x < 85 && s.z < 85) {
           buildingObstacles.push(b);
         }
       }
     });
     bakeGroundHeightGrid();
+    freezeStaticGroup(city.root);
   } catch (e) {
     createFallbackCityRoads();
   }
 
-  // Toshkent Teleminorasi (shahar markaziga yaqin va ko'rinadigan joyda)
+  // Toshkent Teleminorasi
   const towerUrl = findModelFile('tashkent_tv_tower') || './models/tashkent_tv_tower.glb';
   try {
     const tower = await loadNormalizedModel(towerUrl, { targetHeight: 135 });
@@ -247,6 +216,7 @@ async function loadCityAndLandmarks() {
     const tz = -38;
     tower.root.position.set(tx, getGroundY(tx, tz), tz);
     scene.add(tower.root);
+    freezeStaticGroup(tower.root);
   } catch (e) {}
 
   // Registon (ixtiyoriy)
@@ -256,13 +226,14 @@ async function loadCityAndLandmarks() {
       const reg = await loadNormalizedModel(registonUrl, { targetMaxSize: 75 });
       reg.root.position.set(-65, getGroundY(-65, -55), -55);
       scene.add(reg.root);
+      freezeStaticGroup(reg.root);
     } catch (e) {}
   }
 }
 
 function createFallbackCityRoads() {
-  const roadMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.9 });
-  const lineMat = new THREE.MeshStandardMaterial({ color: 0xfef08a, roughness: 0.6 });
+  const roadMat = new THREE.MeshLambertMaterial({ color: 0x1e293b });
+  const lineMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
   const r1 = new THREE.Mesh(new THREE.BoxGeometry(16, 0.2, 420), roadMat);
   r1.position.y = -0.1;
   scene.add(r1);
@@ -318,7 +289,6 @@ async function loadCharacters() {
 }
 
 async function spawnRoadCars() {
-  // Barcha yuklangan mashinalar yo'l bo'ylab joylashtiriladi (tepadan tanlash yo'q!)
   const carDefinitions = [
     {
       id: 'gentra',
@@ -327,8 +297,8 @@ async function spawnRoadCars() {
       color: '#f8fafc',
       plate: { region: '01', number: 'A 777 AA' },
       maxSpeed: 38,
-      accel: 18,
-      rotateY: Math.PI
+      accel: 19,
+      rotateY: 0
     },
     {
       id: 'nexia',
@@ -337,8 +307,8 @@ async function spawnRoadCars() {
       color: '#94a3b8',
       plate: { region: '01', number: 'O 070 OO' },
       maxSpeed: 35,
-      accel: 17,
-      rotateY: Math.PI
+      accel: 18,
+      rotateY: 0
     },
     {
       id: 'damas',
@@ -347,8 +317,8 @@ async function spawnRoadCars() {
       color: '#f8fafc',
       plate: { region: '30', number: 'D 505 DA' },
       maxSpeed: 28,
-      accel: 13,
-      rotateY: Math.PI,
+      accel: 14,
+      rotateY: 0,
       isVan: true
     },
     {
@@ -359,7 +329,7 @@ async function spawnRoadCars() {
       plate: { region: '01', number: 'M 101 MA' },
       maxSpeed: 36,
       accel: 18,
-      rotateY: Math.PI
+      rotateY: 0
     },
     {
       id: 'malibu',
@@ -369,7 +339,7 @@ async function spawnRoadCars() {
       plate: { region: '01', number: 'Z 001 ZZ' },
       maxSpeed: 44,
       accel: 22,
-      rotateY: Math.PI
+      rotateY: 0
     },
     {
       id: 'cobalt',
@@ -379,7 +349,7 @@ async function spawnRoadCars() {
       plate: { region: '10', number: 'C 333 CC' },
       maxSpeed: 37,
       accel: 18,
-      rotateY: Math.PI,
+      rotateY: 0,
       optional: true
     }
   ];
@@ -389,9 +359,12 @@ async function spawnRoadCars() {
     let model = null;
     if (url) {
       try {
+        const savedRot = localStorage.getItem(`uzb_gta_rot_${def.id}`);
+        const rotY = savedRot !== null ? parseFloat(savedRot) : def.rotateY;
         model = await loadNormalizedModel(url, {
           targetMaxSize: 4.5,
-          rotateY: def.rotateY
+          rotateY: rotY,
+          autoAlignZ: savedRot === null // Yoncha bo'lib qolmasligi uchun avtomatik Z o'qiga tekislaydi
         });
       } catch (e) {}
     }
@@ -408,6 +381,7 @@ async function spawnRoadCars() {
 
     state.cars.push({
       ...def,
+      inner: model.inner,
       mesh: model.root,
       rig,
       speed: 0,
@@ -420,13 +394,12 @@ async function spawnRoadCars() {
 }
 
 function spawnNPCsAndTraffic() {
-  // Piyoda NPC lar (qo'l-oyog'i qimirlab yuradi)
-  const npcColors = ['#38bdf8', '#f472b6', '#a78bfa', '#34d399'];
-  for (let i = 0; i < 5; i++) {
-    const fb = createFallbackCharacter(npcColors[i % npcColors.length]);
+  const npcColors = ['#38bdf8', '#f472b6', '#a78bfa'];
+  for (let i = 0; i < 3; i++) {
+    const fb = createFallbackCharacter(npcColors[i]);
     fb.root.add(createContactShadow(0.8, 0.8));
-    const x = (Math.random() - 0.5) * 70;
-    const z = (Math.random() - 0.5) * 70;
+    const x = (Math.random() - 0.5) * 60;
+    const z = (Math.random() - 0.5) * 60;
     fb.root.position.set(x, getGroundY(x, z), z);
     scene.add(fb.root);
 
@@ -434,21 +407,20 @@ function spawnNPCsAndTraffic() {
       mesh: fb.root,
       rig: setupCharacterRig(fb.root, fb.inner, []),
       angle: Math.random() * Math.PI * 2,
-      speed: 1.7 + Math.random() * 0.7,
+      speed: 1.8,
       turnTimer: 2 + Math.random() * 3
     });
   }
 
-  // Shahar trafigi (tezkorroq yuradigan mashinalar)
-  const tColors = ['#dc2626', '#2563eb', '#f59e0b'];
-  for (let i = 0; i < 3; i++) {
-    const tc = createFallbackCar(tColors[i], i === 2);
+  const tColors = ['#dc2626', '#2563eb'];
+  for (let i = 0; i < 2; i++) {
+    const tc = createFallbackCar(tColors[i], false);
     const rig = setupVehicleRig(tc.root, tc.inner, tColors[i]);
     rig.setPlate('01', `T ${200 + i * 111} UZ`);
-    const zPos = -75 + i * 55;
-    const xPos = i % 2 === 0 ? 3.2 : -3.2;
+    const zPos = -60 + i * 100;
+    const xPos = i === 0 ? 3.2 : -3.2;
     tc.root.position.set(xPos, getGroundY(xPos, zPos), zPos);
-    const yaw = i % 2 === 0 ? 0 : Math.PI;
+    const yaw = i === 0 ? 0 : Math.PI;
     tc.root.rotation.y = yaw;
     scene.add(tc.root);
 
@@ -456,14 +428,14 @@ function spawnNPCsAndTraffic() {
       mesh: tc.root,
       rig,
       yaw,
-      speed: 13.5,
+      speed: 14.0,
       radius: 2.15
     });
   }
 }
 
 // ==========================================
-// 5. MULTI-TOUCH BOSHQARUV (SHAFFOF TUGMALAR)
+// 5. MULTI-TOUCH BOSHQARUV
 // ==========================================
 const input = {
   joyX: 0,
@@ -530,7 +502,7 @@ function updateJoystick(touch) {
   }
   joystickStick.style.transform = `translate(${dx}px, ${dy}px)`;
   input.joyX = dx / maxR;
-  input.joyY = dy / maxR; // dy < 0 (tepa) = oldinga!
+  input.joyY = dy / maxR;
 }
 
 const camZone = document.getElementById('camera-touch-zone');
@@ -602,7 +574,7 @@ window.addEventListener('keydown', (e) => input.keys.add(e.code));
 window.addEventListener('keyup', (e) => input.keys.delete(e.code));
 
 // ==========================================
-// 6. KAMERA REJIMLARI, PERSONAJ TANLASH VA MASHINAGA MINISH
+// 6. KAMERA, PERSONAJ VA MASHINA
 // ==========================================
 btnCameraMode.addEventListener('click', () => {
   sound.unlock();
@@ -640,7 +612,6 @@ function enterCar(car) {
   const ch = getActiveChar();
   if (ch) ch.root.visible = false;
 
-  // Kamerani mashina orqasiga qaratish (Gaz bosganda oldinga qarash uchun)
   state.cameraYaw = car.yaw + Math.PI;
 
   joystickZone.style.display = 'none';
@@ -657,7 +628,6 @@ function exitCar() {
   sound.playDoor();
   const car = state.activeCar;
   car.speed *= 0.15;
-  car.rig.setBraking(false);
 
   const sideOffset = new THREE.Vector3(-2.3, 0, 0).applyAxisAngle(
     new THREE.Vector3(0, 1, 0),
@@ -699,12 +669,12 @@ btnRepair.addEventListener('click', () => {
   const car = state.activeCar || state.lastCar || state.cars[0];
   if (!car) return;
   car.hp = 100;
-  repairCarRig(car.rig);
+  car.rig.setDentFactor(100);
   updateCarHud(car);
 });
 
 // ==========================================
-// 7. NOMER, RANG VA 180° YO'NALISH SOZLASH
+// 7. TUNING (NOMER, RANG, 90° & 180° KALIBRATSIYA)
 // ==========================================
 const tuningModal = document.getElementById('tuning-modal');
 const inputRegion = document.getElementById('input-region');
@@ -729,9 +699,20 @@ document.getElementById('btn-close-tuning').addEventListener('click', () => {
   tuningModal.classList.remove('open');
 });
 
+document.getElementById('btn-rotate90-car').addEventListener('click', () => {
+  const car = state.activeCar || state.lastCar || state.cars[0];
+  if (car) {
+    car.rig.rotate90();
+    localStorage.setItem(`uzb_gta_rot_${car.id}`, String(car.inner.rotation.y));
+  }
+});
+
 document.getElementById('btn-flip-car').addEventListener('click', () => {
   const car = state.activeCar || state.lastCar || state.cars[0];
-  if (car) car.rig.flip180();
+  if (car) {
+    car.rig.flip180();
+    localStorage.setItem(`uzb_gta_rot_${car.id}`, String(car.inner.rotation.y));
+  }
 });
 
 inputRegion.addEventListener('input', () => {
@@ -762,7 +743,7 @@ document.getElementById('btn-apply-tuning').addEventListener('click', () => {
 });
 
 // ==========================================
-// 8. ASOSIY TSIKL (FIZIKA, 3 KAMERA REJIMI, NPC, SOUND)
+// 8. ASOSIY TSIKL
 // ==========================================
 const clock = new THREE.Clock();
 
@@ -826,8 +807,6 @@ function updateActiveCar(dt) {
   const left = input.steerLeft || input.keys.has('KeyA') || input.keys.has('ArrowLeft');
   const right = input.steerRight || input.keys.has('KeyD') || input.keys.has('ArrowRight');
 
-  car.rig.setBraking(brake);
-
   if (gas) {
     car.speed += car.accel * dt;
   } else if (brake) {
@@ -868,10 +847,8 @@ function updateActiveCar(dt) {
       const impact = Math.abs(car.speed);
       if (impact > 5.0) {
         sound.playCrash(impact / 15);
-        const localHit = car.mesh.worldToLocal(otherPos.clone());
-        localHit.y = 0.65;
-        applyCarDent(car.rig, localHit, Math.min(0.45, impact * 0.015));
         car.hp = Math.max(10, car.hp - impact * 0.9);
+        car.rig.setDentFactor(car.hp);
         updateCarHud(car);
       }
       car.speed *= -0.32;
@@ -894,8 +871,8 @@ function updateActiveCar(dt) {
     ) {
       if (Math.abs(car.speed) > 5) {
         sound.playCrash(Math.abs(car.speed) / 15);
-        applyCarDent(car.rig, new THREE.Vector3(0, 0.6, 1.8), 0.25);
         car.hp = Math.max(10, car.hp - Math.abs(car.speed) * 0.8);
+        car.rig.setDentFactor(car.hp);
         updateCarHud(car);
       }
       nextPos.copy(car.mesh.position);
@@ -913,7 +890,6 @@ function updateActiveCar(dt) {
     dt * 6
   );
 
-  // Haydashda kamera avtomatik orqadan ergashadi (o'ng tomonda barmoq bo'lmasa)
   if (input.camTouchId === null && Math.abs(car.speed) > 1.5) {
     const desiredCamYaw = car.yaw + Math.PI;
     const diff = Math.atan2(
@@ -935,7 +911,7 @@ function updateNPCsAndTraffic(dt) {
     }
     npc.mesh.position.x += Math.sin(npc.angle) * npc.speed * dt;
     npc.mesh.position.z += Math.cos(npc.angle) * npc.speed * dt;
-    if (Math.abs(npc.mesh.position.x) > 110 || Math.abs(npc.mesh.position.z) > 110) {
+    if (Math.abs(npc.mesh.position.x) > 100 || Math.abs(npc.mesh.position.z) > 100) {
       npc.angle += Math.PI;
     }
     npc.mesh.position.y = getGroundY(npc.mesh.position.x, npc.mesh.position.z);
@@ -946,8 +922,8 @@ function updateNPCsAndTraffic(dt) {
   for (const t of state.trafficCars) {
     t.mesh.position.x += Math.sin(t.yaw) * t.speed * dt;
     t.mesh.position.z += Math.cos(t.yaw) * t.speed * dt;
-    if (t.mesh.position.z > 130) t.mesh.position.z = -130;
-    if (t.mesh.position.z < -130) t.mesh.position.z = 130;
+    if (t.mesh.position.z > 120) t.mesh.position.z = -120;
+    if (t.mesh.position.z < -120) t.mesh.position.z = 120;
     t.mesh.position.y = getGroundY(t.mesh.position.x, t.mesh.position.z);
     for (const w of t.rig.wheels) {
       w.rotation.x += (t.speed * dt) / 0.34;
@@ -960,7 +936,6 @@ function updateCamera(dt) {
   const basePos = state.activeCar ? state.activeCar.mesh.position : state.playerPos;
 
   if (mode === 'firstPerson') {
-    // Personaj ko'zi bilan / mashina salonidan ko'rish
     const eyeHeight = state.activeCar ? 1.32 : 1.62;
     const fwdOffset = state.activeCar ? 0.35 : 0.12;
     const yaw = state.activeCar ? state.activeCar.yaw : state.cameraYaw + Math.PI;
